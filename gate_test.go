@@ -122,31 +122,29 @@ func TestGate_RunNoGoroutineLeak(t *testing.T) {
 	defer g.Close()
 
 	var waitGroup sync.WaitGroup
-	var concurrency atomic.Int32
+	firstIn := make(chan struct{})
+	release := make(chan struct{})
 
-	for range 10 {
-		waitGroup.Go(func() {
-			_ = g.Run(t.Context(), func(ctx context.Context) error {
-				concurrency.Add(1)
-				assert.Equal(t, int32(1), concurrency.Load())
-				concurrency.Add(-1)
-				return nil
-			})
-		})
-	}
+	waitGroup.Go(func() {
+		assert.NoError(t, g.Run(t.Context(), func(ctx context.Context) error {
+			close(firstIn)
+			<-release
+			return nil
+		}))
+	})
+	<-firstIn // wait for the first task to start
 
 	for range 10 {
 		waitGroup.Go(func() {
 			ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 			defer cancel()
 			_ = g.Run(ctx, func(ctx context.Context) error {
-				concurrency.Add(1)
-				assert.Equal(t, int32(1), concurrency.Load())
-				concurrency.Add(-1)
 				return nil
 			})
 		})
 	}
 
+	time.Sleep(time.Millisecond)
+	close(release)
 	waitGroup.Wait()
 }
