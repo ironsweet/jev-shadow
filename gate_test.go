@@ -86,28 +86,29 @@ func TestGate_RunRejectsWhenQueueFull(t *testing.T) {
 	g := NewGate(GateOptions{MaxInFlight: 1, Context: t.Context()})
 	defer g.Close()
 
-	var blockCh = make(chan struct{})
+	release := make(chan struct{})
 	var waitGroup sync.WaitGroup
 
 	waitGroup.Go(func() {
 		assert.NoError(t, g.Run(t.Context(), func(ctx context.Context) error {
-			<-blockCh
+			<-release
 			return nil
 		}))
 	})
 
 	var barrier sync.WaitGroup
 	barrier.Go(func() {
-		time.Sleep(time.Millisecond)
+		var fnCalled atomic.Bool
 		err := g.Run(t.Context(), func(ctx context.Context) error {
+			fnCalled.Store(true)
 			return nil
 		})
 		assert.ErrorIs(t, ErrQueueFull, err)
+		assert.False(t, fnCalled.Load(), "function should not have been called")
 	})
-	print("Waiting for barrier to finish")
 	barrier.Wait()
 
-	blockCh <- struct{}{}
+	close(release)
 	waitGroup.Wait()
 }
 
