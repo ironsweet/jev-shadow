@@ -17,6 +17,7 @@ type Gate struct {
 
 	waiting chan *Task
 	numFree int
+	cancel  context.CancelFunc
 }
 
 type GateOptions struct {
@@ -38,6 +39,7 @@ func NewGate(opts GateOptions) *Gate {
 
 	waiting := make(chan *Task)
 
+	ctx, cancel := context.WithCancel(opts.Context)
 	go func(ctx context.Context) {
 		for ctx.Err() == nil {
 			select {
@@ -52,11 +54,12 @@ func NewGate(opts GateOptions) *Gate {
 				task.ret <- task.run(task.ctx)
 			}
 		}
-	}(opts.Context)
+	}(ctx)
 
 	return &Gate{
 		waiting: waiting,
 		numFree: opts.MaxInFlight,
+		cancel:  cancel,
 	}
 }
 
@@ -89,4 +92,8 @@ func (g *Gate) Run(ctx context.Context, fn func(context.Context) error) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (g *Gate) Close() {
+	g.cancel()
 }

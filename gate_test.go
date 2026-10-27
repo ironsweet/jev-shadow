@@ -12,10 +12,26 @@ import (
 )
 
 func TestGate_RunSerialize(t *testing.T) {
+	g := NewDefaultGate()
+	defer g.Close()
+
 	var concurrency atomic.Int32
 	var waitGroup sync.WaitGroup
+	firstIn := make(chan struct{})
+	release := make(chan struct{})
 
-	g := NewDefaultGate()
+	waitGroup.Go(func() {
+		assert.NoError(t, g.Run(t.Context(), func(ctx context.Context) error {
+			concurrency.Add(1)
+			assert.Equal(t, int32(1), concurrency.Load())
+			close(firstIn)
+			<-release
+			concurrency.Add(-1)
+			return nil
+		}))
+	})
+	<-firstIn // wait for the first task to start
+
 	waitGroup.Go(func() {
 		assert.NoError(t, g.Run(t.Context(), func(ctx context.Context) error {
 			concurrency.Add(1)
@@ -24,23 +40,19 @@ func TestGate_RunSerialize(t *testing.T) {
 			return nil
 		}))
 	})
-	waitGroup.Go(func() {
-		assert.NoError(t, g.Run(t.Context(), func(ctx context.Context) error {
-			concurrency.Add(1)
-			assert.Equal(t, int32(1), concurrency.Load())
-			concurrency.Add(-1)
-			return nil
-		}))
-	})
 
+	time.Sleep(time.Millisecond)
+	close(release)
 	waitGroup.Wait()
 }
 
 func TestGate_RunRespectsContext(t *testing.T) {
+	g := NewDefaultGate()
+	defer g.Close()
+
 	var waitGroup sync.WaitGroup
 	var blockCh = make(chan struct{})
 
-	g := NewDefaultGate()
 	waitGroup.Go(func() {
 		assert.NoError(t, g.Run(t.Context(), func(ctx context.Context) error {
 			<-blockCh
@@ -66,6 +78,8 @@ func TestGate_RunRespectsContext(t *testing.T) {
 
 func TestGate_RunRejectsWhenQueueFull(t *testing.T) {
 	g := NewGate(GateOptions{MaxInFlight: 1, Context: t.Context()})
+	defer g.Close()
+
 	var blockCh = make(chan struct{})
 	var waitGroup sync.WaitGroup
 
@@ -94,9 +108,9 @@ func TestGate_RunRejectsWhenQueueFull(t *testing.T) {
 func TestGate_RunNoGoroutineLeak(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	gateCtx, gateCancel := context.WithCancel(t.Context())
-	defer gateCancel()
-	g := NewGate(GateOptions{MaxInFlight: 7, Context: gateCtx})
+	g := NewGate(GateOptions{MaxInFlight: 7, Context: t.Context()})
+	defer g.Close()
+
 	var waitGroup sync.WaitGroup
 	var concurrency atomic.Int32
 
