@@ -3,7 +3,6 @@ package jev
 import (
 	"context"
 	"errors"
-	"runtime/debug"
 	"sync"
 )
 
@@ -15,11 +14,11 @@ type Task struct {
 
 // Gate enforces sequential ordering of operations
 type Gate struct {
-	sync.Mutex
-
+	lock    sync.Mutex
 	waiting chan *Task
 	numFree int
 	cancel  context.CancelFunc
+	done    chan struct{}
 }
 
 type GateOptions struct {
@@ -28,6 +27,9 @@ type GateOptions struct {
 }
 
 func NewGate(opts GateOptions) *Gate {
+	if opts.MaxInFlight < 1 {
+		panic("MaxInFlight must be at least 1")
+	}
 	if opts.Context == nil {
 		opts.Context = context.Background()
 	}
@@ -38,6 +40,7 @@ func NewGate(opts GateOptions) *Gate {
 		waiting: waiting,
 		numFree: opts.MaxInFlight,
 		cancel:  cancel,
+		done:    make(chan struct{}),
 	}
 
 	go func(ctx context.Context) {
@@ -48,19 +51,14 @@ func NewGate(opts GateOptions) *Gate {
 			case task := <-waiting:
 				// Check if the task's context is already canceled
 				if task.ctx.Err() != nil {
-					task.ret <- task.ctx.Err()
 					continue
 				}
 				func() {
 					defer func() {
-						g.Lock()
-						g.numFree++
-						g.Unlock()
-					}()
-
-					defer func() {
 						r := recover()
-						task.ret <- &PanicError{Value: r, Stack: debug.Stack()}
+						if r != nil {
+							task.ret <- &PanicError{Value: r}
+						}
 					}()
 
 					task.ret <- task.run(task.ctx)
@@ -74,13 +72,13 @@ func NewGate(opts GateOptions) *Gate {
 
 func (g *Gate) Run(ctx context.Context, fn func(context.Context) error) error {
 	// Fast-fail if the queue is full
-	g.Lock()
+	g.lock.Lock()
 	if g.numFree == 0 {
-		g.Unlock()
+		g.lock.Unlock()
 		return ErrQueueFull
 	}
 	g.numFree--
-	g.Unlock()
+	g.lock.Unlock()
 
 	// Submit the task and wait for the result
 	chRet := make(chan error, 1)
@@ -91,8 +89,14 @@ func (g *Gate) Run(ctx context.Context, fn func(context.Context) error) error {
 		ret: chRet,
 	}:
 	case <-ctx.Done():
+		g.release()
 		return ctx.Err()
+	case <-g.done:
+		g.release()
+		return ErrGateClosed
 	}
+
+	defer g.release()
 
 	// Wait for the result or context cancellation
 	select {
@@ -107,6 +111,13 @@ func (g *Gate) Run(ctx context.Context, fn func(context.Context) error) error {
 	}
 }
 
+func (g *Gate) release() {
+	g.lock.Lock()
+	g.numFree++
+	g.lock.Unlock()
+}
+
 func (g *Gate) Close() {
 	g.cancel()
+	close(g.done)
 }

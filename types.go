@@ -42,10 +42,10 @@ func (r *SystemOneResponse) NoulProbability(qid string) (float64, bool) {
 }
 
 var ErrQueueFull = errors.New("queue full")
+var ErrGateClosed = errors.New("gate closed")
 
 type PanicError struct {
 	Value any
-	Stack []byte
 }
 
 func (e *PanicError) Error() string {
