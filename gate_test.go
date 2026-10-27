@@ -51,28 +51,34 @@ func TestGate_RunRespectsContext(t *testing.T) {
 	defer g.Close()
 
 	var waitGroup sync.WaitGroup
-	var blockCh = make(chan struct{})
+	firstIn := make(chan struct{})
+	release := make(chan struct{})
 
 	waitGroup.Go(func() {
 		assert.NoError(t, g.Run(t.Context(), func(ctx context.Context) error {
-			<-blockCh
+			close(firstIn)
+			<-release
 			return nil
 		}))
 	})
+	<-firstIn // wait for the first task to start
 
 	var barrier sync.WaitGroup
 	barrier.Go(func() {
 		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 		defer cancel()
+		var fnCalled atomic.Bool
 		err := g.Run(ctx, func(ctx context.Context) error {
-			time.Sleep(200 * time.Millisecond)
+			fnCalled.Store(true)
 			return nil
 		})
-		assert.Equal(t, context.DeadlineExceeded, err)
+		assert.ErrorIs(t, context.DeadlineExceeded, err)
+		assert.False(t, fnCalled.Load(), "function should not have been called")
 	})
 	barrier.Wait()
 
-	blockCh <- struct{}{}
+	time.Sleep(time.Millisecond)
+	close(release)
 	waitGroup.Wait()
 }
 
@@ -96,7 +102,7 @@ func TestGate_RunRejectsWhenQueueFull(t *testing.T) {
 		err := g.Run(t.Context(), func(ctx context.Context) error {
 			return nil
 		})
-		assert.Equal(t, ErrQueueFull, err)
+		assert.ErrorIs(t, ErrQueueFull, err)
 	})
 	print("Waiting for barrier to finish")
 	barrier.Wait()
