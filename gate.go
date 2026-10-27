@@ -25,13 +25,6 @@ type GateOptions struct {
 	Context     context.Context
 }
 
-func NewDefaultGate() *Gate {
-	return NewGate(GateOptions{
-		MaxInFlight: 10,
-		Context:     context.Background(),
-	})
-}
-
 func NewGate(opts GateOptions) *Gate {
 	if opts.Context == nil {
 		opts.Context = context.Background()
