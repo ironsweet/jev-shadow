@@ -1,5 +1,7 @@
 package jev
 
+import "errors"
+
 type Question struct {
 	Type         string `json:"type"`
 	Instructions string `json:"instructions"`
@@ -35,3 +37,5 @@ func (r *SystemOneResponse) NoulProbability(qid string) (float64, bool) {
 	}
 	return 0, false
 }
+
+var ErrQueueFull = errors.New("queue full")
