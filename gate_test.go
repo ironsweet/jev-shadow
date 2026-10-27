@@ -150,3 +150,26 @@ func TestGate_RunNoGoroutineLeak(t *testing.T) {
 	close(release)
 	waitGroup.Wait()
 }
+
+func TestGate_RunPanicReleases(t *testing.T) {
+	g := NewGate(GateOptions{MaxInFlight: 1, Context: t.Context()})
+	defer g.Close()
+
+	assert.Panics(t, func() {
+		_ = g.Run(t.Context(), func(ctx context.Context) error {
+			panic("boom")
+		})
+	})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		assert.NoError(t, g.Run(t.Context(), func(ctx context.Context) error { return nil }))
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("gate is stuck after fn panic: semaphore not released")
+	}
+}

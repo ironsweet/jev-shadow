@@ -2,6 +2,8 @@ package jev
 
 import (
 	"context"
+	"errors"
+	"runtime/debug"
 	"sync"
 )
 
@@ -31,8 +33,13 @@ func NewGate(opts GateOptions) *Gate {
 	}
 
 	waiting := make(chan *Task)
-
 	ctx, cancel := context.WithCancel(opts.Context)
+	g := &Gate{
+		waiting: waiting,
+		numFree: opts.MaxInFlight,
+		cancel:  cancel,
+	}
+
 	go func(ctx context.Context) {
 		for ctx.Err() == nil {
 			select {
@@ -44,16 +51,25 @@ func NewGate(opts GateOptions) *Gate {
 					task.ret <- task.ctx.Err()
 					continue
 				}
-				task.ret <- task.run(task.ctx)
+				func() {
+					defer func() {
+						g.Lock()
+						g.numFree++
+						g.Unlock()
+					}()
+
+					defer func() {
+						r := recover()
+						task.ret <- &PanicError{Value: r, Stack: debug.Stack()}
+					}()
+
+					task.ret <- task.run(task.ctx)
+				}()
 			}
 		}
 	}(ctx)
 
-	return &Gate{
-		waiting: waiting,
-		numFree: opts.MaxInFlight,
-		cancel:  cancel,
-	}
+	return g
 }
 
 func (g *Gate) Run(ctx context.Context, fn func(context.Context) error) error {
@@ -81,6 +97,10 @@ func (g *Gate) Run(ctx context.Context, fn func(context.Context) error) error {
 	// Wait for the result or context cancellation
 	select {
 	case err := <-chRet:
+		var e *PanicError
+		if errors.As(err, &e) {
+			panic(e.Value)
+		}
 		return err
 	case <-ctx.Done():
 		return ctx.Err()

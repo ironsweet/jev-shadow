@@ -1,6 +1,9 @@
 package jev
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 type Question struct {
 	Type         string `json:"type"`
@@ -39,3 +42,12 @@ func (r *SystemOneResponse) NoulProbability(qid string) (float64, bool) {
 }
 
 var ErrQueueFull = errors.New("queue full")
+
+type PanicError struct {
+	Value any
+	Stack []byte
+}
+
+func (e *PanicError) Error() string {
+	return fmt.Sprintf("panic: %v", e.Value)
+}
