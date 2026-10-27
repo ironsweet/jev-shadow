@@ -32,7 +32,9 @@ func TestGate_RunSerialize(t *testing.T) {
 	})
 	<-firstIn // wait for the first task to start
 
+	secondReady := make(chan struct{})
 	waitGroup.Go(func() {
+		close(secondReady)
 		assert.NoError(t, g.Run(t.Context(), func(ctx context.Context) error {
 			concurrency.Add(1)
 			assert.Equal(t, int32(1), concurrency.Load())
@@ -41,7 +43,8 @@ func TestGate_RunSerialize(t *testing.T) {
 		}))
 	})
 
-	time.Sleep(time.Millisecond)
+	<-secondReady // wait for the second task to be ready
+	time.Sleep(10 * time.Millisecond)
 	close(release)
 	waitGroup.Wait()
 }
@@ -72,12 +75,11 @@ func TestGate_RunRespectsContext(t *testing.T) {
 			fnCalled.Store(true)
 			return nil
 		})
-		assert.ErrorIs(t, context.DeadlineExceeded, err)
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
 		assert.False(t, fnCalled.Load(), "function should not have been called")
 	})
 	barrier.Wait()
 
-	time.Sleep(time.Millisecond)
 	close(release)
 	waitGroup.Wait()
 }
@@ -106,7 +108,7 @@ func TestGate_RunRejectsWhenQueueFull(t *testing.T) {
 			fnCalled.Store(true)
 			return nil
 		})
-		assert.ErrorIs(t, ErrQueueFull, err)
+		assert.ErrorIs(t, err, ErrQueueFull)
 		assert.False(t, fnCalled.Load(), "function should not have been called")
 	})
 	barrier.Wait()
@@ -144,7 +146,7 @@ func TestGate_RunNoGoroutineLeak(t *testing.T) {
 		})
 	}
 
-	time.Sleep(time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 	close(release)
 	waitGroup.Wait()
 }
