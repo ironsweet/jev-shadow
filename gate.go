@@ -2,28 +2,15 @@ package jev
 
 import (
 	"context"
-	"errors"
-	"runtime/debug"
 	"sync"
-	"sync/atomic"
 )
-
-type Task struct {
-	ctx context.Context
-	run func(context.Context) error
-	ret chan error
-}
 
 // Gate enforces sequential ordering of operations
 type Gate struct {
-	lock    sync.Mutex
-	waiting chan *Task
-	numFree int
-
-	cancel    context.CancelFunc
+	token     chan struct{}
+	slots     chan struct{}
 	done      chan struct{}
 	closeOnce sync.Once
-	closed    atomic.Bool
 }
 
 type GateOptions struct {
@@ -41,103 +28,52 @@ func NewGate(opts GateOptions) *Gate {
 		opts.Context = context.Background()
 	}
 
-	waiting := make(chan *Task)
-	ctx, cancel := context.WithCancel(opts.Context)
 	g := &Gate{
-		waiting: waiting,
-		numFree: opts.MaxInFlight,
-		cancel:  cancel,
-		done:    make(chan struct{}),
+		token: make(chan struct{}, 1),
+		slots: make(chan struct{}, opts.MaxInFlight),
+		done:  make(chan struct{}),
 	}
-
-	go func(ctx context.Context) {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case task := <-waiting:
-				// Check if the task's context is already canceled
-				if task.ctx.Err() != nil {
-					continue
-				}
-				if g.closed.Load() {
-					task.ret <- ErrGateClosed
-					continue
-				}
-				func() {
-					defer func() {
-						r := recover()
-						if r != nil {
-							task.ret <- &PanicError{Value: r, Stack: debug.Stack()}
-						}
-					}()
-
-					task.ret <- task.run(task.ctx)
-				}()
-			}
+	// Auto close the gate when the context is canceled
+	go func() {
+		select {
+		case <-opts.Context.Done():
+			g.Close()
+		case <-g.done:
 		}
-	}(ctx)
-
+	}()
 	return g
 }
 
 func (g *Gate) Run(ctx context.Context, fn func(context.Context) error) error {
-	if g.closed.Load() {
+	select {
+	case <-g.done:
 		return ErrGateClosed
-	}
-
-	// Fast-fail if the queue is full
-	g.lock.Lock()
-	if g.numFree == 0 {
-		g.lock.Unlock()
+	case g.slots <- struct{}{}:
+		// Acquired a slot, proceed
+	default:
 		return ErrQueueFull
 	}
-	g.numFree--
-	g.lock.Unlock()
+	// Release the slot when done
+	defer func() {
+		<-g.slots
+	}()
 
-	// Submit the task and wait for the result
-	chRet := make(chan error, 1)
+	// Ensure sequential execution
 	select {
-	case g.waiting <- &Task{
-		ctx: ctx,
-		run: fn,
-		ret: chRet,
-	}:
-	case <-ctx.Done():
-		g.release()
-		return ctx.Err()
-	case <-g.done:
-		g.release()
-		return ErrGateClosed
-	}
-
-	defer g.release()
-
-	// Wait for the result or context cancellation
-	select {
-	case err := <-chRet:
-		var e *PanicError
-		if errors.As(err, &e) {
-			panic(e)
-		}
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
 	case <-g.done:
 		return ErrGateClosed
+	case <-ctx.Done():
+		return ctx.Err()
+	case g.token <- struct{}{}:
+		defer func() {
+			<-g.token
+		}()
+		return fn(ctx)
 	}
-}
-
-func (g *Gate) release() {
-	g.lock.Lock()
-	g.numFree++
-	g.lock.Unlock()
 }
 
 func (g *Gate) Close() {
 	g.closeOnce.Do(func() {
-		g.closed.Store(true)
-		g.cancel()
 		close(g.done)
 	})
 }
