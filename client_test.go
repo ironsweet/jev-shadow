@@ -33,36 +33,38 @@ const sampleResponse = `
 	"backend": "torch-cuda"
 }`
 
+func writeSample(w http.ResponseWriter) {
+	_, _ = w.Write([]byte(sampleResponse))
+}
+
 func fakeJevServer(t *testing.T, handler func(http.ResponseWriter, *SystemOneRequest) bool) *httptest.Server {
 	t.Helper()
-	var soReq SystemOneRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/systemone" {
+			http.Error(w, "not found", http.StatusNotFound)
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			return
 		}
 
+		var soReq SystemOneRequest
 		err := json.NewDecoder(r.Body).Decode(&soReq)
 		if err != nil {
 			t.Errorf("failed to decode request body: %v", err)
 		}
 
-		if handler != nil {
-			if handler(w, &soReq) {
-				return
-			}
+		if handler(w, &soReq) {
+			return
 		}
-		// return a default response if handler returns nil
-		_, _ = w.Write([]byte(sampleResponse))
+		writeSample(w)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
 }
 
 func TestClient_Judge_Success(t *testing.T) {
-	var soRequest *SystemOneRequest
-
+	reqCh := make(chan SystemOneRequest, 1)
 	srv := fakeJevServer(t, func(w http.ResponseWriter, req *SystemOneRequest) bool {
-		soRequest = req
+		reqCh <- *req
 		return false
 	})
 
@@ -73,6 +75,7 @@ func TestClient_Judge_Success(t *testing.T) {
 		"Intent is covered?")
 	require.NoError(t, err)
 
+	soRequest := <-reqCh
 	require.NotNil(t, soRequest)
 	_, ok := soRequest.Questions["intent_covered"]
 	assert.True(t, ok)
@@ -89,12 +92,16 @@ func TestClient_Judge_Error(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		handler func(http.ResponseWriter, *SystemOneRequest) bool
+		assert  func(t *testing.T, err error)
 	}{
 		{
 			name: "non-200",
 			handler: func(w http.ResponseWriter, r *SystemOneRequest) bool {
 				http.Error(w, "boom", http.StatusUnprocessableEntity)
 				return true
+			},
+			assert: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "422")
 			},
 		},
 		{
@@ -103,25 +110,28 @@ func TestClient_Judge_Error(t *testing.T) {
 				_, _ = w.Write([]byte(`{not json`))
 				return true
 			},
+			assert: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "invalid character")
+			},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := fakeJevServer(t, tc.handler)
 			cc := NewClient(srv.URL, 2*time.Second)
 			_, err := cc.Judge(t.Context(), "s", "q", "i")
-			require.Error(t, err)
+			tc.assert(t, err)
 		})
 	}
 }
 
 func TestClient_Judge_UnexpectedAnswerShape(t *testing.T) {
 	srv := fakeJevServer(t, func(w http.ResponseWriter, r *SystemOneRequest) bool {
-		_ = json.NewEncoder(w).Encode(SystemOneResponse{
-			Answers: map[string]map[string]any{
-				"other_question": {"type": "noul", "noul": 0.5},
-				"wrong_type":     {"type": "choice"},
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"answers": map[string]any{
+				"other_question": map[string]any{"type": "noul", "noul": 0.5},
+				"wrong_type":     map[string]any{"type": "choice"},
 			},
-		})
+		}))
 		return true
 	})
 	cc := NewClient(srv.URL, 2*time.Second)
@@ -149,6 +159,7 @@ func TestClient_Judge_ContextTimeout(t *testing.T) {
 	start := time.Now()
 	_, err := cc.Judge(ctx, "s", "q", "i")
 	elapsed := time.Since(start)
-	require.Error(t, err)
-	assert.Less(t, elapsed.Milliseconds(), int64(1000), "expected timeout to occur within 1 second")
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Greater(t, elapsed.Milliseconds(), int64(400), "expected timeout close to ctx timeout")
+	assert.Less(t, elapsed.Milliseconds(), int64(1000))
 }
