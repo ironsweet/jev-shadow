@@ -3,6 +3,7 @@ package jev
 import (
 	"context"
 	"errors"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 )
@@ -67,7 +68,7 @@ func NewGate(opts GateOptions) *Gate {
 					defer func() {
 						r := recover()
 						if r != nil {
-							task.ret <- &PanicError{Value: r}
+							task.ret <- &PanicError{Value: r, Stack: debug.Stack()}
 						}
 					}()
 
@@ -117,7 +118,7 @@ func (g *Gate) Run(ctx context.Context, fn func(context.Context) error) error {
 	case err := <-chRet:
 		var e *PanicError
 		if errors.As(err, &e) {
-			panic(e.Value)
+			panic(e)
 		}
 		return err
 	case <-ctx.Done():

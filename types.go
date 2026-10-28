@@ -46,8 +46,24 @@ var ErrGateClosed = errors.New("gate closed")
 
 type PanicError struct {
 	Value any
+	Stack []byte
 }
 
 func (e *PanicError) Error() string {
-	return fmt.Sprintf("panic: %v", e.Value)
+	return fmt.Sprintf("panic: %v\n\n%s", e.Value, string(e.Stack))
+}
+
+func (e *PanicError) Unwrap() error {
+	if err, ok := e.Value.(error); ok {
+		return err
+	}
+	return nil
+}
+
+func RecoverPanic(r any) (value any, stack []byte) {
+	e, ok := r.(*PanicError)
+	if ok {
+		return e.Value, e.Stack
+	}
+	return r, nil
 }
