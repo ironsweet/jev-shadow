@@ -5,29 +5,28 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
 type Client struct {
 	apiBase    string
-	timeout    time.Duration
 	httpClient *http.Client
 }
 
 func NewClient(url string, timeout time.Duration) *Client {
 	return &Client{
-		apiBase: url,
-		timeout: timeout,
+		apiBase: strings.TrimRight(url, "/"),
 		httpClient: &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
 				DialContext: (&net.Dialer{
 					Timeout: 3 * time.Second,
 				}).DialContext,
-				ResponseHeaderTimeout: 5 * time.Second,
-				MaxIdleConnsPerHost:   10,
+				MaxIdleConnsPerHost: 10,
 			},
 		},
 	}
@@ -53,6 +52,7 @@ func (cc *Client) Judge(ctx context.Context, state string, questionId string, in
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := cc.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
@@ -60,7 +60,8 @@ func (cc *Client) Judge(ctx context.Context, state string, questionId string, in
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("unexpected status code %d: %s,", resp.StatusCode, bytes.TrimSpace(body))
 	}
 
 	var systemResp SystemOneResponse
