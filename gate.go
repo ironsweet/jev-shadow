@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 )
 
 type Task struct {
@@ -17,11 +18,16 @@ type Gate struct {
 	lock    sync.Mutex
 	waiting chan *Task
 	numFree int
-	cancel  context.CancelFunc
-	done    chan struct{}
+
+	cancel    context.CancelFunc
+	done      chan struct{}
+	closeOnce sync.Once
+	closed    atomic.Bool
 }
 
 type GateOptions struct {
+	// MaxInFlight limits the number of valid tasks entering the gate. A task
+	// becomes invalid if its context is canceled.
 	MaxInFlight int
 	Context     context.Context
 }
@@ -44,13 +50,17 @@ func NewGate(opts GateOptions) *Gate {
 	}
 
 	go func(ctx context.Context) {
-		for ctx.Err() == nil {
+		for {
 			select {
 			case <-ctx.Done():
 				return
 			case task := <-waiting:
 				// Check if the task's context is already canceled
 				if task.ctx.Err() != nil {
+					continue
+				}
+				if g.closed.Load() {
+					task.ret <- ErrGateClosed
 					continue
 				}
 				func() {
@@ -71,6 +81,10 @@ func NewGate(opts GateOptions) *Gate {
 }
 
 func (g *Gate) Run(ctx context.Context, fn func(context.Context) error) error {
+	if g.closed.Load() {
+		return ErrGateClosed
+	}
+
 	// Fast-fail if the queue is full
 	g.lock.Lock()
 	if g.numFree == 0 {
@@ -108,6 +122,8 @@ func (g *Gate) Run(ctx context.Context, fn func(context.Context) error) error {
 		return err
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-g.done:
+		return ErrGateClosed
 	}
 }
 
@@ -118,6 +134,9 @@ func (g *Gate) release() {
 }
 
 func (g *Gate) Close() {
-	g.cancel()
-	close(g.done)
+	g.closeOnce.Do(func() {
+		g.closed.Store(true)
+		g.cancel()
+		close(g.done)
+	})
 }
