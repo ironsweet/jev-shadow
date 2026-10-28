@@ -2,6 +2,7 @@ package jev
 
 import (
 	"errors"
+	"time"
 )
 
 type Question struct {
@@ -42,3 +43,14 @@ func (r *SystemOneResponse) NoulProbability(qid string) (float64, bool) {
 
 var ErrQueueFull = errors.New("queue full")
 var ErrGateClosed = errors.New("gate closed")
+
+type Category string
+
+type Entry struct {
+	Timestamp       time.Time `json:"timestamp"`
+	UserIntent      string    `json:"user_intent"`
+	ToolCalls       string    `json:"tool_calls"`
+	ExistingVerdict string    `json:"existing_verdict"`
+	JEVProbability  float64   `json:"jev_probability"`
+	LatencyMs       float64   `json:"latency_ms"`
+}
