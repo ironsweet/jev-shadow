@@ -43,8 +43,7 @@ func (r *SystemOneResponse) NoulProbability(qid string) (float64, bool) {
 
 var ErrQueueFull = errors.New("queue full")
 var ErrGateClosed = errors.New("gate closed")
-
-type Category string
+var ErrRecorderClosed = errors.New("recorder closed")
 
 type Entry struct {
 	Timestamp       time.Time `json:"timestamp"`

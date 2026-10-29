@@ -17,6 +17,7 @@ func TestRecorder_WritesAllFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "jev-records.jsonl")
 	r := NewFileRecorder(FileRecorderOptions{Location: path})
 	assert.NoError(t, r.Record("intent", "tool calls", "", 0.8849556062190528, 2069.2))
+	assert.NoError(t, r.Close())
 
 	// Scan the file and ensure each line is a valid Entry
 	f, err := os.OpenFile(path, os.O_RDONLY, 0)
@@ -53,6 +54,7 @@ func TestRecorder_ConcurrentSafe(t *testing.T) {
 		})
 	}
 	waitGroup.Wait()
+	assert.NoError(t, r.Close())
 
 	f, err := os.OpenFile(path, os.O_RDONLY, 0)
 	require.NoError(t, err)
@@ -74,6 +76,7 @@ func TestRecorder_WriteErrorReturned(t *testing.T) {
 	r := NewFileRecorder(FileRecorderOptions{Location: path})
 	err := r.Record("intent", "tool calls", "", 0.5, 100)
 	assert.Error(t, err, "expected error when writing to a non-existent directory")
+	assert.NoError(t, r.Close())
 }
 
 func TestRecorder_PreservesExisting(t *testing.T) {
@@ -82,6 +85,7 @@ func TestRecorder_PreservesExisting(t *testing.T) {
 	r := NewFileRecorder(FileRecorderOptions{Location: path})
 	assert.NoError(t, r.Record("intent1", "tool calls1", "", 0.1, 100))
 	assert.NoError(t, r.Record("intent2", "tool calls2", "", 0.2, 200))
+	assert.NoError(t, r.Close())
 
 	f, err := os.OpenFile(path, os.O_RDONLY, 0)
 	require.NoError(t, err)
