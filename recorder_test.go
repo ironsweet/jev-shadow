@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,7 +17,13 @@ import (
 func TestRecorder_WritesAllFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "jev-records.jsonl")
 	r := NewFileRecorder(FileRecorderOptions{Location: path})
-	assert.NoError(t, r.Record("intent", "tool calls", "", 0.8849556062190528, 2069.2))
+	assert.NoError(t, r.Record(Entry{
+		Timestamp:      time.Now(),
+		UserIntent:     "intent",
+		ToolCalls:      "tool calls",
+		JEVProbability: 0.8849556062190528,
+		LatencyMs:      2069.2,
+	}))
 	assert.NoError(t, r.Close())
 
 	// Scan the file and ensure each line is a valid Entry
@@ -49,7 +56,14 @@ func TestRecorder_ConcurrentSafe(t *testing.T) {
 	for range 10 {
 		waitGroup.Go(func() {
 			for range 10 {
-				assert.NoError(t, r.Record("i", "t", "v", rand.Float64(), rand.Float64()*1000))
+				assert.NoError(t, r.Record(Entry{
+					Timestamp:       time.Now(),
+					UserIntent:      "i",
+					ToolCalls:       "t",
+					ExistingVerdict: "v",
+					JEVProbability:  rand.Float64(),
+					LatencyMs:       rand.Float64() * 1000,
+				}))
 			}
 		})
 	}
@@ -74,7 +88,14 @@ func TestRecorder_ConcurrentSafe(t *testing.T) {
 func TestRecorder_WriteErrorReturned(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nonexistent-dir", "jev-records.jsonl")
 	r := NewFileRecorder(FileRecorderOptions{Location: path})
-	err := r.Record("intent", "tool calls", "", 0.5, 100)
+	err := r.Record(Entry{
+		Timestamp:       time.Now(),
+		UserIntent:      "intent",
+		ToolCalls:       "tool calls",
+		ExistingVerdict: "",
+		JEVProbability:  0.5,
+		LatencyMs:       100,
+	})
 	assert.Error(t, err, "expected error when writing to a non-existent directory")
 	assert.NoError(t, r.Close())
 }
@@ -83,8 +104,22 @@ func TestRecorder_PreservesExisting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "jev-cont-records.jsonl")
 	require.NoError(t, os.WriteFile(path, []byte(`{"timestamp":"2024-06-01T12:00:00Z","user_intent":"existing intent","tool_calls":"existing tool calls","existing_verdict":"existing verdict","jev_probability":0.5,"latency_ms":100}`+"\n"), 0644))
 	r := NewFileRecorder(FileRecorderOptions{Location: path})
-	assert.NoError(t, r.Record("intent1", "tool calls1", "", 0.1, 100))
-	assert.NoError(t, r.Record("intent2", "tool calls2", "", 0.2, 200))
+	assert.NoError(t, r.Record(Entry{
+		Timestamp:       time.Now(),
+		UserIntent:      "intent1",
+		ToolCalls:       "tool calls1",
+		ExistingVerdict: "",
+		JEVProbability:  0.1,
+		LatencyMs:       100,
+	}))
+	assert.NoError(t, r.Record(Entry{
+		Timestamp:       time.Now(),
+		UserIntent:      "intent2",
+		ToolCalls:       "tool calls2",
+		ExistingVerdict: "",
+		JEVProbability:  0.2,
+		LatencyMs:       200,
+	}))
 	assert.NoError(t, r.Close())
 
 	f, err := os.OpenFile(path, os.O_RDONLY, 0)

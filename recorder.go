@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"sync"
-	"time"
 )
 
 type FileRecorderOptions struct {
@@ -25,7 +24,7 @@ func NewFileRecorder(opts FileRecorderOptions) *FileRecorder {
 	}
 }
 
-func (r *FileRecorder) Record(userIntent, toolCalls, existingVerdict string, jevProbability, jevLatencyMs float64) error {
+func (r *FileRecorder) Record(entry Entry) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
@@ -43,14 +42,7 @@ func (r *FileRecorder) Record(userIntent, toolCalls, existingVerdict string, jev
 		return r.openErr
 	}
 
-	return json.NewEncoder(r.file).Encode(Entry{
-		Timestamp:       time.Now(),
-		UserIntent:      userIntent,
-		ToolCalls:       toolCalls,
-		ExistingVerdict: existingVerdict,
-		JEVProbability:  jevProbability,
-		LatencyMs:       jevLatencyMs,
-	})
+	return json.NewEncoder(r.file).Encode(entry)
 }
 
 func (r *FileRecorder) Close() error {
