@@ -58,3 +58,5 @@ func (r *FileRecorder) Close() error {
 	}
 	return nil
 }
+
+var _ Recorder = (*FileRecorder)(nil)

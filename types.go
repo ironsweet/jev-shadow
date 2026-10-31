@@ -42,7 +42,6 @@ func (r *SystemOneResponse) NoulProbability(qid string) (float64, bool) {
 }
 
 var ErrQueueFull = errors.New("queue full")
-var ErrGateClosed = errors.New("gate closed")
 var ErrRecorderClosed = errors.New("recorder closed")
 var ErrShadowClosed = errors.New("shadow closed")
 

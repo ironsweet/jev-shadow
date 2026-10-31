@@ -3,11 +3,11 @@ package jev
 import "context"
 
 type Judger interface {
-	Judge(userIntent, toolCalls, existingVerdict string) (float64, error)
+	Judge(ctx context.Context, userIntent, toolCalls string) (float64, float64, error)
 }
 
 type Recorder interface {
-	Record(userIntent, toolCalls, existingVerdict string, jevProbability, jevLatencyMs float64) error
+	Record(entry Entry) error
 	Close() error
 }
 
@@ -29,7 +29,7 @@ func NewShadow(judger Judger, recorder Recorder, gate GateRunner) *Shadow {
 	}
 }
 
-func (s *Shadow) Submit(ctx context.Context, userIntent, toolCalls, existingVerdict string, jevProbability, jevLatencyMs float64) error {
+func (s *Shadow) Submit(userIntent, toolCalls, existingVerdict string) {
 	panic("niy")
 }
 
