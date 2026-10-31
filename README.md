@@ -1,3 +1,4 @@
+[![CI](https://github.com/ironsweet/jev-shadow/actions/workflows/ci.yml/badge.svg)](https://github.com/ironsweet/jev-shadow/actions/workflows/ci.yml)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/ironsweet/jev-shadow)](https://pkg.go.dev/github.com/ironsweet/jev-shadow)
 
 # jev-shadow

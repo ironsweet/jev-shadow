@@ -52,11 +52,6 @@ func NewShadow(judge Judge, recorder Recorder, gate GateRunner, opts ...ShadowOp
 	return s
 }
 
-func (s *Shadow) WithLogger(logger Logger) *Shadow {
-	s.logger = logger
-	return s
-}
-
 func (s *Shadow) Submit(userIntent, toolCalls, existingVerdict string) {
 	s.wg.Go(func() {
 		defer func() {
