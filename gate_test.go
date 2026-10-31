@@ -12,8 +12,7 @@ import (
 )
 
 func TestGate_RunSerialize(t *testing.T) {
-	g := NewGate(GateOptions{MaxInFlight: 2, Context: t.Context()})
-	defer g.Close()
+	g := NewGate(GateOptions{MaxInFlight: 2})
 
 	var concurrency atomic.Int32
 	var waitGroup sync.WaitGroup
@@ -50,8 +49,7 @@ func TestGate_RunSerialize(t *testing.T) {
 }
 
 func TestGate_RunRespectsContext(t *testing.T) {
-	g := NewGate(GateOptions{MaxInFlight: 2, Context: t.Context()})
-	defer g.Close()
+	g := NewGate(GateOptions{MaxInFlight: 2})
 
 	var waitGroup sync.WaitGroup
 	firstIn := make(chan struct{})
@@ -85,8 +83,7 @@ func TestGate_RunRespectsContext(t *testing.T) {
 }
 
 func TestGate_RunRejectsWhenQueueFull(t *testing.T) {
-	g := NewGate(GateOptions{MaxInFlight: 1, Context: t.Context()})
-	defer g.Close()
+	g := NewGate(GateOptions{MaxInFlight: 1})
 
 	var waitGroup sync.WaitGroup
 	firstIn := make(chan struct{})
@@ -120,8 +117,7 @@ func TestGate_RunRejectsWhenQueueFull(t *testing.T) {
 func TestGate_RunNoGoroutineLeak(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	g := NewGate(GateOptions{MaxInFlight: 7, Context: t.Context()})
-	defer g.Close()
+	g := NewGate(GateOptions{MaxInFlight: 7})
 
 	var waitGroup sync.WaitGroup
 	firstIn := make(chan struct{})
@@ -152,8 +148,7 @@ func TestGate_RunNoGoroutineLeak(t *testing.T) {
 }
 
 func TestGate_RunPanicReleases(t *testing.T) {
-	g := NewGate(GateOptions{MaxInFlight: 1, Context: t.Context()})
-	defer g.Close()
+	g := NewGate(GateOptions{MaxInFlight: 1})
 
 	assert.Panics(t, func() {
 		_ = g.Run(t.Context(), func(ctx context.Context) error {

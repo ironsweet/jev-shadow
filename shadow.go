@@ -13,7 +13,6 @@ type Recorder interface {
 
 type GateRunner interface {
 	Run(ctx context.Context, fn func(context.Context) error) error
-	Close()
 }
 
 type Shadow struct {
