@@ -69,23 +69,17 @@ func TestClient_Judge_Success(t *testing.T) {
 	})
 
 	cc := NewClient(srv.URL, 5*time.Second)
-	resp, err := cc.Judge(t.Context(),
-		"User intention: x\nTool calls: y",
-		"intent_covered",
-		"Intent is covered?")
+	prob, latency, err := cc.Judge(t.Context(), "goal", "do something")
 	require.NoError(t, err)
 
 	soRequest := <-reqCh
-	require.NotNil(t, soRequest)
 	_, ok := soRequest.Questions["intent_covered"]
 	assert.True(t, ok)
-	assert.NotEmpty(t, soRequest.State)
+	assert.Contains(t, soRequest.State, "goal")
+	assert.Contains(t, soRequest.State, "do something")
 
-	require.NotNil(t, resp)
-	prob, ok := resp.NoulProbability("intent_covered")
-	require.True(t, ok)
 	assert.Equal(t, 0.8849556062190528, prob)
-	assert.Equal(t, 2069.2, resp.LatencyMs)
+	assert.Equal(t, 2069.2, latency)
 }
 
 func TestClient_Judge_Error(t *testing.T) {
@@ -111,36 +105,54 @@ func TestClient_Judge_Error(t *testing.T) {
 				return true
 			},
 			assert: func(t *testing.T, err error) {
-				assert.ErrorContains(t, err, "invalid character")
+				assert.ErrorContains(t, err, "decode")
 			},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := fakeJevServer(t, tc.handler)
 			cc := NewClient(srv.URL, 2*time.Second)
-			_, err := cc.Judge(t.Context(), "s", "q", "i")
+			_, _, err := cc.Judge(t.Context(), "goal", "do something")
 			tc.assert(t, err)
 		})
 	}
 }
 
 func TestClient_Judge_UnexpectedAnswerShape(t *testing.T) {
-	srv := fakeJevServer(t, func(w http.ResponseWriter, r *SystemOneRequest) bool {
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-			"answers": map[string]any{
-				"other_question": map[string]any{"type": "noul", "noul": 0.5},
-				"wrong_type":     map[string]any{"type": "choice"},
+	for _, tc := range []struct {
+		name    string
+		handler func(http.ResponseWriter, *SystemOneRequest) bool
+	}{
+		{
+			name: "missing-intent_covered",
+			handler: func(w http.ResponseWriter, r *SystemOneRequest) bool {
+				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+					"answers": map[string]any{
+						"other_question": map[string]any{"type": "noul", "noul": 0.5},
+					},
+				}))
+				return true
 			},
-		}))
-		return true
-	})
-	cc := NewClient(srv.URL, 2*time.Second)
-	resp, err := cc.Judge(t.Context(), "s", "intent_covered", "i")
-	require.NoError(t, err)
-	_, ok := resp.NoulProbability("intent_covered")
-	assert.False(t, ok)
-	_, ok = resp.NoulProbability("wrong_type")
-	assert.False(t, ok)
+		},
+		{
+			name: "wrong-type-intent_covered",
+			handler: func(w http.ResponseWriter, r *SystemOneRequest) bool {
+				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+					"answers": map[string]any{
+						"intent_covered": map[string]any{"type": "choice"},
+					},
+				}))
+				return true
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := fakeJevServer(t, tc.handler)
+			cc := NewClient(srv.URL, 2*time.Second)
+			_, _, err := cc.Judge(t.Context(), "goal", "do something")
+			assert.ErrorContains(t, err, "intent_covered")
+		})
+	}
 }
 
 func TestClient_Judge_ContextTimeout(t *testing.T) {
@@ -157,7 +169,7 @@ func TestClient_Judge_ContextTimeout(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	_, err := cc.Judge(ctx, "s", "q", "i")
+	_, _, err := cc.Judge(ctx, "goal", "do something")
 	elapsed := time.Since(start)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Greater(t, elapsed.Milliseconds(), int64(400), "expected timeout close to ctx timeout")
