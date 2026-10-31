@@ -78,4 +78,4 @@ func (cc *Client) Judge(ctx context.Context, userIntent, toolCalls string) (floa
 	return prob, systemResp.LatencyMs, nil
 }
 
-var _ Judger = (*Client)(nil)
+var _ Judge = (*Client)(nil)

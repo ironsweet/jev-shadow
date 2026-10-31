@@ -1,8 +1,13 @@
 package jev
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+)
 
-type Judger interface {
+type Judge interface {
 	Judge(ctx context.Context, userIntent, toolCalls string) (float64, float64, error)
 }
 
@@ -16,27 +21,78 @@ type GateRunner interface {
 }
 
 type Shadow struct {
-	judger   Judger
+	judge    Judge
 	recorder Recorder
 	gate     GateRunner
+	logger   Logger
+
+	wg sync.WaitGroup
 }
 
-func NewShadow(judger Judger, recorder Recorder, gate GateRunner) *Shadow {
-	return &Shadow{
-		judger:   judger,
-		recorder: recorder,
-		gate:     gate,
+type ShadowOption func(*Shadow)
+
+func WithLogger(logger Logger) ShadowOption {
+	return func(s *Shadow) {
+		if logger != nil {
+			s.logger = logger
+		}
 	}
 }
 
+func NewShadow(judge Judge, recorder Recorder, gate GateRunner, opts ...ShadowOption) *Shadow {
+	s := &Shadow{
+		judge:    judge,
+		recorder: recorder,
+		gate:     gate,
+		logger:   simpleSlogAdapter(),
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+func (s *Shadow) WithLogger(logger Logger) *Shadow {
+	s.logger = logger
+	return s
+}
+
 func (s *Shadow) Submit(userIntent, toolCalls, existingVerdict string) {
-	panic("niy")
+	s.wg.Go(func() {
+		defer func() {
+			r := recover()
+			if r != nil {
+				s.logger.Warn(context.Background(), "panic in Submit", "error", r)
+			}
+		}()
+
+		ctx := context.Background()
+		err := s.gate.Run(ctx, func(ctx context.Context) error {
+			prob, latency, err := s.judge.Judge(ctx, userIntent, toolCalls)
+			if err != nil {
+				return fmt.Errorf("judge error: %w", err)
+			}
+
+			entry := Entry{
+				Timestamp:       time.Now(),
+				UserIntent:      userIntent,
+				ToolCalls:       toolCalls,
+				ExistingVerdict: existingVerdict,
+				JEVProbability:  prob,
+				LatencyMs:       latency,
+			}
+			err = s.recorder.Record(entry)
+			if err != nil {
+				return fmt.Errorf("recorder error: %w", err)
+			}
+			return nil
+		})
+		if err != nil {
+			s.logger.Warn(ctx, "gate run error", "error", err)
+		}
+	})
 }
 
-func (s *Shadow) Wait() error {
-	panic("niy")
-}
-
-func (s *Shadow) Close() error {
-	panic("niy")
+func (s *Shadow) Wait() {
+	s.wg.Wait()
 }

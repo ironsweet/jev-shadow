@@ -11,11 +11,11 @@ import (
 	"go.uber.org/goleak"
 )
 
-type fakeJudger struct {
+type fakeJudge struct {
 	fn func(ctx context.Context, userIntent, toolCalls string) (float64, float64, error)
 }
 
-func (f *fakeJudger) Judge(ctx context.Context, userIntent, toolCalls string) (float64, float64, error) {
+func (f *fakeJudge) Judge(ctx context.Context, userIntent, toolCalls string) (float64, float64, error) {
 	return f.fn(ctx, userIntent, toolCalls)
 }
 
@@ -45,7 +45,7 @@ func (f *fakeGate) Run(ctx context.Context, fn func(context.Context) error) erro
 }
 
 func TestShadow_SubmitRecordsSuccess(t *testing.T) {
-	judger := &fakeJudger{
+	judge := &fakeJudge{
 		fn: func(ctx context.Context, userIntent, toolCalls string) (float64, float64, error) {
 			time.Sleep(500 * time.Millisecond) // Simulate some processing time
 			return 0.88, 500, nil
@@ -53,12 +53,12 @@ func TestShadow_SubmitRecordsSuccess(t *testing.T) {
 	}
 	recorder := &fakeRecorder{}
 	gate := NewGate(GateOptions{MaxInFlight: 1})
-	s := NewShadow(judger, recorder, gate)
+	s := NewShadow(judge, recorder, gate)
 	start := time.Now()
 	s.Submit("intent", "tool calls", "existing verdict")
-	assert.LessOrEqual(t, time.Since(start), 20*time.Millisecond, "Submit should return immediately, not wait for judger")
+	assert.LessOrEqual(t, time.Since(start), 20*time.Millisecond, "Submit should return immediately, not wait for judge")
 
-	assert.NoError(t, s.Wait())
+	s.Wait()
 	assert.Equal(t, 1, len(recorder.entries), "Recorder should have one entry")
 	entry := recorder.entries[0]
 	assert.Equal(t, "intent", entry.UserIntent)
@@ -71,22 +71,22 @@ func TestShadow_SubmitRecordsSuccess(t *testing.T) {
 func TestShadow_FailureIsSilent(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		judger func(ctx context.Context, userIntent, toolCalls string) (float64, float64, error)
+		judge  func(ctx context.Context, userIntent, toolCalls string) (float64, float64, error)
 		runner func(ctx context.Context, fn func(context.Context) error) error
 	}{
 		{
-			name: "judger returns error",
-			judger: func(ctx context.Context, userIntent, toolCalls string) (float64, float64, error) {
-				return 0, 0, fmt.Errorf("judger error")
+			name: "judge returns error",
+			judge: func(ctx context.Context, userIntent, toolCalls string) (float64, float64, error) {
+				return 0, 0, fmt.Errorf("judge error")
 			},
 			runner: func(ctx context.Context, fn func(context.Context) error) error {
 				return fn(ctx)
 			},
 		},
 		{
-			name: "judger panics",
-			judger: func(ctx context.Context, userIntent, toolCalls string) (float64, float64, error) {
-				panic("judger panic")
+			name: "judge panics",
+			judge: func(ctx context.Context, userIntent, toolCalls string) (float64, float64, error) {
+				panic("judge panic")
 			},
 			runner: func(ctx context.Context, fn func(context.Context) error) error {
 				return fn(ctx)
@@ -102,11 +102,11 @@ func TestShadow_FailureIsSilent(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			recorder := &fakeRecorder{}
 			gate := &fakeGate{fn: tc.runner}
-			s := NewShadow(&fakeJudger{fn: tc.judger}, recorder, gate)
+			s := NewShadow(&fakeJudge{fn: tc.judge}, recorder, gate)
 			s.Submit("intent", "tool calls", "existing verdict")
 			// Wait a bit to ensure the background goroutine has run
-			assert.NoError(t, s.Wait())
-			assert.Equal(t, 0, len(recorder.entries), "Recorder should have no entries on judger error")
+			s.Wait()
+			assert.Equal(t, 0, len(recorder.entries), "Recorder should have no entries on judge error")
 		})
 	}
 }
@@ -118,16 +118,16 @@ func TestShadow_RecorderFailureIsSilent(t *testing.T) {
 		},
 	}
 	gate := NewGate(GateOptions{MaxInFlight: 1})
-	s := NewShadow(&fakeJudger{fn: func(ctx context.Context, userIntent, toolCalls string) (float64, float64, error) {
+	s := NewShadow(&fakeJudge{fn: func(ctx context.Context, userIntent, toolCalls string) (float64, float64, error) {
 		return 0.88, 100, nil
 	}}, recorder, gate)
 	s.Submit("intent", "tool calls", "existing verdict")
-	assert.NoError(t, s.Wait())
+	s.Wait()
 	assert.Equal(t, 0, len(recorder.entries), "Recorder should have no entries on recorder error")
 
 	recorder.fn = nil
 	s.Submit("intent2", "tool calls2", "existing verdict2")
-	assert.NoError(t, s.Wait())
+	s.Wait()
 	assert.Equal(t, 1, len(recorder.entries), "Recorder should have one entry after successful record")
 	entry := recorder.entries[0]
 	assert.Equal(t, "intent2", entry.UserIntent)
@@ -142,9 +142,9 @@ func TestShadow_SerializedByGate(t *testing.T) {
 	gate := NewGate(GateOptions{MaxInFlight: 5})
 	var maxConcurrent atomic.Int32
 	var numInvoked atomic.Int32
-	s := NewShadow(&fakeJudger{fn: func(ctx context.Context, userIntent, toolCalls string) (float64, float64, error) {
+	s := NewShadow(&fakeJudge{fn: func(ctx context.Context, userIntent, toolCalls string) (float64, float64, error) {
 		maxConcurrent.Add(1)
-		assert.Equal(t, 1, int(maxConcurrent.Load()), "Only one judger invocation should be in flight at a time")
+		assert.Equal(t, 1, int(maxConcurrent.Load()), "Only one judge invocation should be in flight at a time")
 		defer maxConcurrent.Add(-1)
 		numInvoked.Add(1)
 		return 0.88, 100, nil
@@ -152,8 +152,8 @@ func TestShadow_SerializedByGate(t *testing.T) {
 	for range 5 {
 		s.Submit("intent", "tool calls", "existing verdict")
 	}
-	assert.NoError(t, s.Wait())
-	assert.Equal(t, 5, int(numInvoked.Load()), "Judger should have been invoked 5 times")
+	s.Wait()
+	assert.Equal(t, 5, int(numInvoked.Load()), "Judge should have been invoked 5 times")
 	assert.Equal(t, 5, len(recorder.entries), "Recorder should have 5 entries")
 }
 
@@ -161,7 +161,7 @@ func TestShadow_NoGoroutineLeak(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	var caseIdx atomic.Int32
-	judger := &fakeJudger{
+	judge := &fakeJudge{
 		fn: func(ctx context.Context, userIntent, toolCalls string) (float64, float64, error) {
 			defer func() {
 				caseIdx.Add(1)
@@ -169,9 +169,9 @@ func TestShadow_NoGoroutineLeak(t *testing.T) {
 			if caseIdx.Load() < 5 {
 				return 0.88, 100, nil
 			} else if caseIdx.Load() < 8 {
-				return 0, 0, fmt.Errorf("judger error")
+				return 0, 0, fmt.Errorf("judge error")
 			} else if caseIdx.Load() < 10 {
-				panic("judger panic")
+				panic("judge panic")
 			}
 
 			return 0.88, 100, nil
@@ -179,9 +179,9 @@ func TestShadow_NoGoroutineLeak(t *testing.T) {
 	}
 	recorder := &fakeRecorder{}
 	gate := NewGate(GateOptions{MaxInFlight: 10})
-	s := NewShadow(judger, recorder, gate)
+	s := NewShadow(judge, recorder, gate)
 	for range 12 {
 		s.Submit("intent", "tool calls", "existing verdict")
 	}
-	assert.NoError(t, s.Wait())
+	s.Wait()
 }
