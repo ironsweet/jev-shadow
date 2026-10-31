@@ -61,6 +61,7 @@ func (r *FileRecorder) Close() error {
 	}
 	r.closed = true
 	if r.file != nil {
+		_ = r.file.Sync()
 		return r.file.Close()
 	}
 	return nil
